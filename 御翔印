@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JAL 御翔印 集印地図</title>
+<meta name="description" content="JAL御翔印の取扱空港を日本地図でチェックできる集印マップ">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f7f4ec; --sea: #e9eef0; --land: #dcd5c4; --landline: #b7ad96;
+    --ink: #2f2a26; --sub: #8a8172; --shu: #c73e3a; --shudeep: #a52f2c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 18px 14px 48px; }
+  header { display: flex; align-items: center; gap: 14px; }
+  .seal {
+    width: 52px; height: 52px; flex-shrink: 0; border: 2.5px solid var(--shu); color: var(--shu);
+    border-radius: 6px; display: flex; align-items: center; justify-content: center;
+    transform: rotate(-4deg); font-size: 13px; font-weight: 700; line-height: 1.1;
+    writing-mode: vertical-rl; letter-spacing: 2px;
+  }
+  h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: 1px; }
+  .tagline { font-size: 12.5px; color: var(--sub); margin-top: 2px; }
+  .progress { margin: 14px 0 10px; }
+  .progress-row { display: flex; justify-content: space-between; align-items: baseline; }
+  .count b { font-size: 26px; color: var(--shudeep); }
+  .count .total { color: var(--sub); }
+  .pct { font-size: 13px; color: var(--sub); }
+  .bar { height: 6px; background: #e3ddcd; border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--shu); width: 0; transition: width .25s; }
+  .mapbox { background: var(--sea); border: 1px solid rgba(183,173,150,.4); border-radius: 8px; overflow: hidden; }
+  svg { width: 100%; display: block; }
+  .airport { cursor: pointer; }
+  .airport text { user-select: none; -webkit-user-select: none; }
+  section.region { margin-bottom: 14px; }
+  h2 {
+    font-size: 14px; margin: 0 0 5px; font-weight: 700; letter-spacing: 1.5px;
+    border-left: 3px solid var(--shu); padding-left: 8px;
+    display: flex; justify-content: space-between;
+  }
+  h2 .rc { color: var(--sub); font-weight: 400; letter-spacing: 0; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; margin: 3px;
+    border-radius: 3px; border: 1px solid rgba(138,129,114,.35); background: #fff;
+    font-size: 13px; cursor: pointer; transition: all .12s; line-height: 1.2;
+    font-family: inherit; color: var(--ink);
+  }
+  .chip:hover { border-color: var(--shu); }
+  .chip.on { background: var(--shu); border-color: var(--shudeep); color: #fff; font-weight: 600; }
+  .chip:focus-visible { outline: 2px solid var(--shu); outline-offset: 2px; }
+  .note { font-size: 11.5px; color: var(--sub); line-height: 1.7; margin-top: 18px; }
+  .reset {
+    margin-top: 10px; background: none; border: 1px solid rgba(138,129,114,.5); color: var(--sub);
+    font-family: inherit; font-size: 12px; padding: 5px 12px; border-radius: 3px; cursor: pointer;
+  }
+  .reset:hover { border-color: var(--shudeep); color: var(--shudeep); }
+  @media (prefers-reduced-motion: reduce) { .chip, .bar > div { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="seal">御翔印</div>
+    <div>
+      <h1>JAL 御翔印 集印地図</h1>
+      <div class="tagline">空港をタップして押印チェック</div>
+    </div>
+  </header>
+
+  <div class="progress">
+    <div class="progress-row">
+      <span class="count">押印済み <b id="cnt">0</b><span class="total"> / <span id="tot"></span> 空港</span></span>
+      <span class="pct" id="pct">0%</span>
+    </div>
+    <div class="bar"><div id="barfill"></div></div>
+  </div>
+
+  <div class="mapbox">
+    <svg id="map" viewBox="0 0 510 458" role="img" aria-label="JAL御翔印取扱空港の日本地図"></svg>
+  </div>
+
+  <div id="list" style="margin-top:22px"></div>
+
+  <p class="note">
+    ※ 収録空港はJALグループ国内就航空港に基づく参考リストです。御翔印の取扱空港・デザインは変更されることがあるため、
+    最新の対象空港は<a href="https://www.jal.co.jp/" target="_blank" rel="noopener" style="color:var(--shudeep)">JAL公式サイト</a>の御翔印ページでご確認ください。
+    チェック状態はこのブラウザ(localStorage)に保存されます。
+  </p>
+  <button class="reset" id="reset">チェックをすべてリセット</button>
+</div>
+
+<script>
+"use strict";
+// ---------- 空港データ  lp: ラベル位置 r/l/t/b, inset: 南西諸島枠, isle: 島の描画半径 ----------
+const REGIONS = [
+  { name: "北海道", airports: [
+    { id:"cts", name:"新千歳", lat:42.78, lon:141.68, lp:"r" },
+    { id:"okd", name:"札幌丘珠", lat:43.12, lon:141.38, lp:"l" },
+    { id:"hkd", name:"函館", lat:41.77, lon:140.82, lp:"b" },
+    { id:"akj", name:"旭川", lat:43.67, lon:142.45, lp:"t" },
+    { id:"kuh", name:"釧路", lat:43.04, lon:144.19, lp:"b" },
+    { id:"obo", name:"帯広", lat:42.73, lon:143.22, lp:"b" },
+    { id:"mmb", name:"女満別", lat:43.88, lon:144.16, lp:"r" },
+    { id:"ris", name:"利尻", lat:45.24, lon:141.19, lp:"l", isle:5 },
+    { id:"oir", name:"奥尻", lat:42.07, lon:139.45, lp:"l", isle:4 },
+  ]},
+  { name: "東北", airports: [
+    { id:"aoj", name:"青森", lat:40.73, lon:140.69, lp:"l" },
+    { id:"msj", name:"三沢", lat:40.70, lon:141.37, lp:"r" },
+    { id:"axt", name:"秋田", lat:39.61, lon:140.22, lp:"l" },
+    { id:"hna", name:"いわて花巻", lat:39.43, lon:141.13, lp:"r" },
+    { id:"gaj", name:"山形", lat:38.41, lon:140.37, lp:"l" },
+    { id:"sdj", name:"仙台", lat:38.14, lon:140.92, lp:"r" },
+  ]},
+  { name: "関東", airports: [
+    { id:"hnd", name:"羽田", lat:35.55, lon:139.78, lp:"b" },
+    { id:"nrt", name:"成田", lat:35.77, lon:140.39, lp:"r" },
+  ]},
+  { name: "中部・北陸", airports: [
+    { id:"kij", name:"新潟", lat:37.95, lon:139.11, lp:"l" },
+    { id:"kmq", name:"小松", lat:36.39, lon:136.41, lp:"l" },
+    { id:"ngo", name:"中部", lat:34.86, lon:136.81, lp:"b" },
+  ]},
+  { name: "近畿", airports: [
+    { id:"tjh", name:"但馬", lat:35.51, lon:134.79, lp:"t" },
+    { id:"itm", name:"伊丹", lat:34.79, lon:135.44, lp:"r" },
+    { id:"kix", name:"関西", lat:34.43, lon:135.24, lp:"l" },
+    { id:"shm", name:"南紀白浜", lat:33.66, lon:135.36, lp:"b" },
+  ]},
+  { name: "中国", airports: [
+    { id:"oki", name:"隠岐", lat:36.18, lon:133.32, lp:"t", isle:5 },
+    { id:"izo", name:"出雲", lat:35.41, lon:132.89, lp:"t" },
+    { id:"okj", name:"岡山", lat:34.76, lon:133.86, lp:"t" },
+    { id:"hij", name:"広島", lat:34.44, lon:132.92, lp:"t" },
+    { id:"ubj", name:"山口宇部", lat:33.93, lon:131.28, lp:"t" },
+  ]},
+  { name: "四国", airports: [
+    { id:"tak", name:"高松", lat:34.21, lon:134.02, lp:"b" },
+    { id:"tks", name:"徳島", lat:34.13, lon:134.61, lp:"r" },
+    { id:"myj", name:"松山", lat:33.83, lon:132.70, lp:"l" },
+    { id:"kcz", name:"高知", lat:33.55, lon:133.67, lp:"b" },
+  ]},
+  { name: "九州", airports: [
+    { id:"fuk", name:"福岡", lat:33.59, lon:130.45, lp:"t" },
+    { id:"oit", name:"大分", lat:33.48, lon:131.74, lp:"r" },
+    { id:"ngs", name:"長崎", lat:32.92, lon:129.91, lp:"l" },
+    { id:"kmj", name:"熊本", lat:32.84, lon:130.86, lp:"r" },
+    { id:"kmi", name:"宮崎", lat:31.88, lon:131.45, lp:"r" },
+    { id:"koj", name:"鹿児島", lat:31.80, lon:130.72, lp:"l" },
+    { id:"fuj", name:"五島福江", lat:32.67, lon:128.83, lp:"b", isle:5 },
+  ]},
+  { name: "奄美・鹿児島離島", airports: [
+    { id:"tne", name:"種子島", lat:30.61, lon:130.99, lp:"r", isle:5 },
+    { id:"kum", name:"屋久島", lat:30.39, lon:130.55, lp:"l", isle:6 },
+    { id:"asj", name:"奄美", lat:28.43, lon:129.71, lp:"l", inset:true, isle:7 },
+    { id:"kkx", name:"喜界島", lat:28.32, lon:129.93, lp:"r", inset:true, isle:4 },
+    { id:"tkn", name:"徳之島", lat:27.84, lon:128.88, lp:"t", inset:true, isle:5 },
+    { id:"oke", name:"沖永良部", lat:27.43, lon:128.71, lp:"r", inset:true, isle:4 },
+    { id:"rnj", name:"与論", lat:27.04, lon:128.40, lp:"l", inset:true, isle:3.5 },
+  ]},
+  { name: "沖縄", airports: [
+    { id:"oka", name:"那覇", lat:26.20, lon:127.65, lp:"l", inset:true, isle:6 },
+    { id:"ueo", name:"久米島", lat:26.36, lon:126.71, lp:"t", inset:true, isle:4 },
+    { id:"ktd", name:"北大東", lat:25.94, lon:131.33, lp:"t", inset:true, isle:3.5 },
+    { id:"mmd", name:"南大東", lat:25.85, lon:131.26, lp:"b", inset:true, isle:3.5 },
+    { id:"mmy", name:"宮古", lat:24.78, lon:125.30, lp:"r", inset:true, isle:5 },
+    { id:"tra", name:"多良間", lat:24.65, lon:124.68, lp:"t", inset:true, isle:3.5 },
+    { id:"isg", name:"石垣", lat:24.40, lon:124.25, lp:"b", inset:true, isle:5 },
+    { id:"ogn", name:"与那国", lat:24.47, lon:122.98, lp:"l", inset:true, isle:4 },
+  ]},
+];
+const ALL = REGIONS.flatMap(r => r.airports);
+const TOTAL = ALL.length;
+const KEY = "jal-goshoin-checked";
+
+// ---------- 投影 ----------
+const mx = lon => (lon - 128.3) * 28;
+const my = lat => (46 - lat) * 28;
+const ixp = lon => 12 + (lon - 122.6) * 26;
+const iyp = lat => 16 + (28.9 - lat) * 26;
+const pos = a => a.inset ? { x: ixp(a.lon), y: iyp(a.lat) } : { x: mx(a.lon), y: my(a.lat) };
+
+const HOKKAIDO = [[140.4,42.1],[139.85,42.6],[140.3,43.15],[140.5,43.2],[141.0,43.15],[141.4,43.35],[141.65,44.3],[141.6,45.2],[141.7,45.45],[142.1,45.1],[142.6,44.85],[143.3,44.35],[144.3,44.1],[144.8,43.95],[145.35,44.35],[145.55,43.7],[145.3,43.3],[144.7,42.95],[143.95,42.95],[143.3,42.0],[142.5,42.3],[141.85,42.6],[141.0,42.6],[140.5,42.55],[141.0,41.8],[140.65,41.7],[140.3,41.8],[140.15,42.05]];
+const HONSHU = [[140.6,41.2],[141.0,41.0],[141.15,40.85],[141.4,41.3],[141.5,41.0],[141.4,40.5],[141.7,39.6],[141.6,38.9],[141.0,38.3],[140.95,37.8],[141.05,37.0],[140.6,36.2],[140.65,35.9],[140.95,35.7],[140.4,35.4],[139.95,34.9],[139.8,35.3],[139.65,35.25],[139.45,35.3],[139.15,34.6],[138.85,34.65],[138.75,35.1],[138.5,35.05],[138.2,34.6],[137.3,34.65],[137.05,34.58],[136.9,34.75],[136.55,34.6],[136.9,34.3],[136.3,34.15],[136.0,33.85],[135.75,33.45],[135.35,33.5],[135.1,33.9],[135.35,34.35],[135.45,34.65],[134.7,34.75],[134.0,34.65],[133.15,34.4],[132.3,34.35],[132.2,34.2],[131.75,34.05],[131.0,33.95],[130.9,34.3],[131.4,34.4],[132.1,34.9],[132.6,35.25],[133.2,35.55],[134.0,35.55],[135.0,35.5],[135.25,35.75],[135.6,35.5],[136.05,35.65],[136.1,36.2],[136.7,36.3],[136.75,36.75],[137.0,37.35],[137.35,37.5],[137.3,37.0],[137.5,36.75],[138.3,37.1],[138.9,37.85],[139.4,38.1],[139.95,39.0],[140.05,39.9],[139.85,40.6],[140.3,41.15]];
+const SHIKOKU = [[134.65,34.25],[134.75,33.85],[134.35,33.55],[134.2,33.25],[133.3,33.35],[133.0,32.75],[132.5,32.95],[132.4,33.35],[132.05,33.35],[132.6,33.95],[133.6,34.25],[134.3,34.2]];
+const KYUSHU = [[130.9,33.95],[131.6,33.65],[131.75,33.25],[131.9,33.25],[131.5,32.6],[131.35,31.55],[131.05,31.35],[130.7,31.0],[130.65,31.55],[130.75,31.7],[130.35,31.25],[130.15,31.4],[130.35,32.1],[130.15,32.4],[129.75,32.55],[130.0,32.85],[129.65,33.05],[129.75,33.35],[130.15,33.4],[130.35,33.6],[130.45,33.85]];
+
+// ---------- 状態 ----------
+let checked = new Set();
+try {
+  const raw = localStorage.getItem(KEY);
+  if (raw) checked = new Set(JSON.parse(raw));
+} catch (e) { /* localStorage不可の環境では保存なしで動作 */ }
+
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify([...checked])); } catch (e) {}
+}
+
+// ---------- 描画 ----------
+const SVGNS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("map");
+
+function el(tag, attrs, parent) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+function toPath(pts) {
+  return pts.map((p, i) => (i ? "L" : "M") + mx(p[0]).toFixed(1) + "," + my(p[1]).toFixed(1)).join(" ") + " Z";
+}
+
+// 本土
+[HOKKAIDO, HONSHU, SHIKOKU, KYUSHU].forEach(p =>
+  el("path", { d: toPath(p), fill: "var(--land)", stroke: "var(--landline)", "stroke-width": 1, "stroke-linejoin": "round" }, svg)
+);
+// 南西諸島インセット
+el("rect", { x:5, y:5, width:252, height:140, rx:5, fill:"var(--sea)", stroke:"var(--landline)", "stroke-width":1, "stroke-dasharray":"4 3" }, svg);
+const insetLabel = el("text", { x:14, y:19, "font-size":9, fill:"var(--sub)" }, svg);
+insetLabel.textContent = "南西諸島(奄美・沖縄)";
+
+function labelAttrs(lp, x, y, r) {
+  const g = r + 3.5;
+  if (lp === "l") return { x: x - g, y: y + 2.6, anchor: "end" };
+  if (lp === "t") return { x: x, y: y - g - 1.5, anchor: "middle" };
+  if (lp === "b") return { x: x, y: y + g + 6.5, anchor: "middle" };
+  return { x: x + g, y: y + 2.6, anchor: "start" };
+}
+
+const marks = {}; // id -> {g, redraw}
+function drawAirport(a) {
+  const { x, y } = pos(a);
+  const r = a.inset ? 4.6 : 5.2;
+  const fs = a.inset ? 7.2 : 8;
+  const g = el("g", { class: "airport", tabindex: 0, role: "checkbox" }, svg);
+  g.setAttribute("aria-label", a.name + "空港");
+
+  if (a.isle) el("circle", { cx:x, cy:y, r:a.isle, fill:"var(--land)", stroke:"var(--landline)", "stroke-width":0.6 }, g);
+  el("circle", { cx:x, cy:y, r:r+6, fill:"transparent" }, g); // タップ領域拡大
+
+  const mark = el("g", {}, g);
+  const la = labelAttrs(a.lp, x, y, r);
+  const label = el("text", { x:la.x, y:la.y, "text-anchor":la.anchor, "font-size":fs }, g);
+  label.textContent = a.name;
+
+  function redraw() {
+    const on = checked.has(a.id);
+    g.setAttribute("aria-checked", on);
+    mark.innerHTML = "";
+    if (on) {
+      const inner = el("g", { transform: `rotate(-8 ${x} ${y})` }, mark);
+      el("circle", { cx:x, cy:y, r:r, fill:"var(--shu)", stroke:"var(--shudeep)", "stroke-width":0.8 }, inner);
+      el("path", {
+        d: `M${x - r*0.45},${y + r*0.05} L${x - r*0.1},${y + r*0.42} L${x + r*0.5},${y - r*0.38}`,
+        fill:"none", stroke:"#fff", "stroke-width":1.5, "stroke-linecap":"round", "stroke-linejoin":"round"
+      }, inner);
+    } else {
+      el("circle", { cx:x, cy:y, r:r-1, fill:"var(--paper)", stroke:"var(--sub)", "stroke-width":1.1 }, mark);
+    }
+    label.setAttribute("fill", on ? "var(--shudeep)" : "var(--ink)");
+    label.setAttribute("font-weight", on ? 600 : 400);
+  }
+  g.addEventListener("click", () => toggle(a.id));
+  g.addEventListener("keydown", e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggle(a.id); } });
+  marks[a.id] = redraw;
+  redraw();
+}
+ALL.filter(a => !a.inset).forEach(drawAirport);
+ALL.filter(a => a.inset).forEach(drawAirport);
+
+// チェックリスト
+const listEl = document.getElementById("list");
+const chips = {}; // id -> {btn, box}
+const regionCounts = {}; // name -> span
+REGIONS.forEach(r => {
+  const sec = document.createElement("section");
+  sec.className = "region";
+  const h = document.createElement("h2");
+  const nm = document.createElement("span"); nm.textContent = r.name;
+  const rc = document.createElement("span"); rc.className = "rc";
+  regionCounts[r.name] = rc;
+  h.append(nm, rc);
+  sec.appendChild(h);
+  const box = document.createElement("div");
+  r.airports.forEach(a => {
+    const btn = document.createElement("button");
+    btn.className = "chip";
+    const mk = document.createElement("span"); mk.style.fontSize = "12px";
+    const tx = document.createElement("span"); tx.textContent = a.name;
+    btn.append(mk, tx);
+    btn.addEventListener("click", () => toggle(a.id));
+    chips[a.id] = { btn, mk };
+    box.appendChild(btn);
+  });
+  sec.appendChild(box);
+  listEl.appendChild(sec);
+});
+
+// 進捗
+document.getElementById("tot").textContent = TOTAL;
+function refresh() {
+  const n = checked.size;
+  const pct = Math.round(n / TOTAL * 100);
+  document.getElementById("cnt").textContent = n;
+  document.getElementById("pct").textContent = pct + "%";
+  document.getElementById("barfill").style.width = pct + "%";
+  REGIONS.forEach(r => {
+    const d = r.airports.filter(a => checked.has(a.id)).length;
+    regionCounts[r.name].textContent = d + "/" + r.airports.length;
+  });
+  ALL.forEach(a => {
+    const on = checked.has(a.id);
+    const c = chips[a.id];
+    c.btn.classList.toggle("on", on);
+    c.mk.textContent = on ? "☑" : "☐";
+    marks[a.id]();
+  });
+}
+function toggle(id) {
+  checked.has(id) ? checked.delete(id) : checked.add(id);
+  save();
+  refresh();
+}
+document.getElementById("reset").addEventListener("click", () => {
+  if (confirm("チェックをすべてリセットしますか?")) {
+    checked.clear(); save(); refresh();
+  }
+});
+refresh();
+</script>
+</body>
+</html>
